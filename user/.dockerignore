@@ -1,0 +1,23 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Локальная БД
+*.db
+*.sqlite
+
+# Временные файлы
+*.tmp
+*.log
+
+# Зависимости (будут скачаны в контейнере)
+vendor/
+
+# Документация
+README.md
+docs/

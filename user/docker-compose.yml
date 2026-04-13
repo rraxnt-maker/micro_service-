@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: user_postgres
+    command: -p 5430  # Меняем внутренний порт на 5430
+    environment:
+      POSTGRES_USER: useradmin
+      POSTGRES_PASSWORD: secretpassword
+      POSTGRES_DB: userdb
+    ports:
+      - "5430:5430"  # Теперь и внешний и внутренний порты 5430
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U useradmin -d userdb -p 5430"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - user-network
+
+  app:
+    build: .
+    container_name: user_app
+    ports:
+      - "8069:8069"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5430  # Меняем на 5430
+      DB_USER: useradmin
+      DB_PASSWORD: secretpassword
+      DB_NAME: userdb
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - user-network
+
+volumes:
+  postgres_data:
+
+networks:
+  user-network:
+    driver: bridge
