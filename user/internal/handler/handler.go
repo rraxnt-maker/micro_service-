@@ -41,6 +41,45 @@ func writeJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) 
 	json.NewEncoder(w).Encode(data)
 }
 
+// notifyStatusService уведомляет Status Service о событиях с пользователем
+func notifyStatusService(userID string, action string) {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	var req *http.Request
+	var err error
+
+	switch action {
+	case "sync":
+		body := strings.NewReader(`{"user_id":"` + userID + `"}`)
+		req, err = http.NewRequest("POST", config.StatusServiceURL+"/internal/sync", body)
+	case "delete":
+		req, err = http.NewRequest("DELETE", config.StatusServiceURL+"/internal/user/"+userID, nil)
+	default:
+		return
+	}
+
+	if err != nil {
+		log.Printf("Failed to create request to Status Service: %v", err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", config.InternalToken)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Failed to notify Status Service (%s): %v", action, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Status Service returned non-OK status for %s: %d", action, resp.StatusCode)
+	} else {
+		log.Printf("✅ Status Service notified: %s for user %s", action, userID)
+	}
+}
+
 // GET /profile - получить свой профиль
 func GetProfile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -253,6 +292,9 @@ func DeleteProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Уведомляем Status Service асинхронно
+	go notifyStatusService(userID, "delete")
+
 	writeJSONResponse(w, http.StatusOK, map[string]string{
 		"status":  "deleted",
 		"user_id": userID,
@@ -305,6 +347,9 @@ func SyncUser(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	// Уведомляем Status Service асинхронно
+	go notifyStatusService(data.ID, "sync")
 
 	writeJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"status":  status,

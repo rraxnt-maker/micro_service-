@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: status_postgres
+    command: -p 5431
+    environment:
+      POSTGRES_USER: statusadmin
+      POSTGRES_PASSWORD: statuspass
+      POSTGRES_DB: statusdb
+    ports:
+      - "5431:5431"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U statusadmin -d statusdb -p 5431"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - status-network
+      - shared-network  # 🔥 Общая сеть
+
+  app:
+    build: .
+    container_name: status_app
+    ports:
+      - "8070:8070"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5431
+      DB_USER: statusadmin
+      DB_PASSWORD: statuspass
+      DB_NAME: statusdb
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-secret-internal-token-123}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - status-network
+      - shared-network  # 🔥 Общая сеть
+
+volumes:
+  postgres_data:
+
+networks:
+  status-network:
+    driver: bridge
+  shared-network:  # 🔥 Внешняя сеть
+    name: microservices-network
+    external: true
