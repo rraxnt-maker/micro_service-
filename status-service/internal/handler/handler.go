@@ -3,13 +3,13 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
-	"fmt"
 	"status-service/internal/config"
 	"status-service/internal/model"
 	"status-service/internal/storage"
@@ -17,7 +17,6 @@ import (
 
 var uuidRegex = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// Вспомогательные функции
 func validateUserID(id string) bool {
 	return uuidRegex.MatchString(id)
 }
@@ -34,16 +33,15 @@ func writeJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) 
 	json.NewEncoder(w).Encode(data)
 }
 
-// PUT /status - установить статус
 func SetStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	userID := r.Header.Get("X-User-ID")
+	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		writeJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		writeJSONError(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -79,7 +77,6 @@ func SetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Валидация
 	req.Text = strings.TrimSpace(req.Text)
 	if req.Text == "" {
 		writeJSONError(w, "Text cannot be empty", http.StatusBadRequest)
@@ -119,16 +116,15 @@ func SetStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /status - получить свой статус
 func GetStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	userID := r.Header.Get("X-User-ID")
+	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		writeJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		writeJSONError(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -152,22 +148,15 @@ func GetStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, http.StatusOK, status)
 }
 
-// GET /status/{user_id} - получить статус другого пользователя
 func GetUserStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) != 2 || pathParts[0] != "status" {
-		writeJSONError(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	userID := pathParts[1]
+	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		writeJSONError(w, "Missing user id", http.StatusBadRequest)
+		writeJSONError(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -191,44 +180,37 @@ func GetUserStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, http.StatusOK, status)
 }
 
-// POST /status/batch - получить статусы нескольких пользователей
 func GetBatchStatuses(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodGet {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	r.Body = http.MaxBytesReader(nil, r.Body, config.MaxBodySize)
-	defer r.Body.Close()
-
-	var req model.BatchRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	err := decoder.Decode(&req)
-	if err != nil {
-		writeJSONError(w, "Bad JSON", http.StatusBadRequest)
+	userIDsParam := r.URL.Query().Get("user_ids")
+	if userIDsParam == "" {
+		writeJSONError(w, "Missing user_ids parameter", http.StatusBadRequest)
 		return
 	}
 
-	if len(req.UserIDs) == 0 {
+	userIDs := strings.Split(userIDsParam, ",")
+	if len(userIDs) == 0 {
 		writeJSONError(w, "User IDs cannot be empty", http.StatusBadRequest)
 		return
 	}
 
-	if len(req.UserIDs) > 100 {
+	if len(userIDs) > 100 {
 		writeJSONError(w, "Maximum 100 user IDs allowed", http.StatusBadRequest)
 		return
 	}
 
-	for _, id := range req.UserIDs {
-		if !validateUserID(id) {
+	for _, id := range userIDs {
+		if !validateUserID(strings.TrimSpace(id)) {
 			writeJSONError(w, "Invalid user ID format: "+id, http.StatusBadRequest)
 			return
 		}
 	}
 
-	statuses, err := storage.DB.GetBatchStatuses(req.UserIDs)
+	statuses, err := storage.DB.GetBatchStatuses(userIDs)
 	if err != nil {
 		log.Printf("Database error: %v", err)
 		writeJSONError(w, "Internal server error", http.StatusInternalServerError)
@@ -240,16 +222,15 @@ func GetBatchStatuses(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DELETE /status - удалить свой статус
 func DeleteStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	userID := r.Header.Get("X-User-ID")
+	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		writeJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		writeJSONError(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -270,16 +251,15 @@ func DeleteStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /status/dnd - установить режим "Не беспокоить"
 func SetDND(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	userID := r.Header.Get("X-User-ID")
+	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		writeJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		writeJSONError(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -297,7 +277,6 @@ func SetDND(w http.ResponseWriter, r *http.Request) {
 
 	err := decoder.Decode(&req)
 	if err != nil {
-		// Пустое тело - ок, используем значения по умолчанию
 		if !errors.Is(err, io.EOF) {
 			writeJSONError(w, "Bad JSON", http.StatusBadRequest)
 			return
@@ -327,16 +306,15 @@ func SetDND(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, http.StatusOK, response)
 }
 
-// GET /status/history - получить историю статусов
 func GetHistory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	userID := r.Header.Get("X-User-ID")
+	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		writeJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		writeJSONError(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -345,7 +323,6 @@ func GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Парсим query параметры
 	limit := 10
 	offset := 0
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -376,14 +353,12 @@ func GetHistory(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /internal/sync - синхронизация пользователя (внутренний эндпоинт)
 func InternalSync(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Проверяем внутренний токен
 	token := r.Header.Get("X-Internal-Token")
 	if token != config.InternalToken {
 		writeJSONError(w, "Forbidden", http.StatusForbidden)
@@ -422,29 +397,21 @@ func InternalSync(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DELETE /internal/user/{user_id} - удаление пользователя (внутренний эндпоинт)
 func InternalDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Проверяем внутренний токен
 	token := r.Header.Get("X-Internal-Token")
 	if token != config.InternalToken {
 		writeJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) != 3 || pathParts[0] != "internal" || pathParts[1] != "user" {
-		writeJSONError(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	userID := pathParts[2]
+	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		writeJSONError(w, "Missing user id", http.StatusBadRequest)
+		writeJSONError(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -465,7 +432,6 @@ func InternalDeleteUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /health - проверка работоспособности
 func HealthCheck(w http.ResponseWriter, r *http.Request) {
 	if err := storage.DB.Ping(); err != nil {
 		writeJSONError(w, "Database connection failed", http.StatusServiceUnavailable)

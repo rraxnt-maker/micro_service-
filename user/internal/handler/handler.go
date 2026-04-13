@@ -10,13 +10,11 @@ import (
 	"strings"
 	"time"
 	"user/internal/config"
-	"user/internal/model"
 	"user/internal/storage"
 )
 
 var uuidRegex = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// Вспомогательные функции
 func validateUserID(id string) bool {
 	return uuidRegex.MatchString(id)
 }
@@ -41,7 +39,6 @@ func writeJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) 
 	json.NewEncoder(w).Encode(data)
 }
 
-// notifyStatusService уведомляет Status Service о событиях с пользователем
 func notifyStatusService(userID string, action string) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -80,16 +77,15 @@ func notifyStatusService(userID string, action string) {
 	}
 }
 
-// GET /profile - получить свой профиль
 func GetProfile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	userID := r.Header.Get("X-User-ID")
+	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		writeJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		writeJSONError(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -113,16 +109,15 @@ func GetProfile(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, http.StatusOK, user)
 }
 
-// PUT /profile/update - обновить свой профиль
 func UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut && r.Method != http.MethodPatch {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	userID := r.Header.Get("X-User-ID")
+	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		writeJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		writeJSONError(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -223,22 +218,15 @@ func UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /user/{id} - получить профиль другого пользователя
 func GetUserByID(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) != 2 || pathParts[0] != "user" {
-		writeJSONError(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	userID := pathParts[1]
+	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		writeJSONError(w, "Missing user id", http.StatusBadRequest)
+		writeJSONError(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -262,16 +250,15 @@ func GetUserByID(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, http.StatusOK, user)
 }
 
-// DELETE /profile/delete - удалить свой аккаунт
 func DeleteProfile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	userID := r.Header.Get("X-User-ID")
+	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		writeJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		writeJSONError(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -292,7 +279,6 @@ func DeleteProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Уведомляем Status Service асинхронно
 	go notifyStatusService(userID, "delete")
 
 	writeJSONResponse(w, http.StatusOK, map[string]string{
@@ -301,63 +287,50 @@ func DeleteProfile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /sync - синхронизация от Auth Service
 func SyncUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	r.Body = http.MaxBytesReader(nil, r.Body, config.MaxBodySize)
-	defer r.Body.Close()
+	userID := r.URL.Query().Get("id")
+	email := r.URL.Query().Get("email")
 
-	var data model.SyncRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	err := decoder.Decode(&data)
-	if err != nil {
-		writeJSONError(w, "Bad JSON", http.StatusBadRequest)
+	if userID == "" {
+		writeJSONError(w, "Missing id parameter", http.StatusBadRequest)
 		return
 	}
 
-	if data.ID == "" {
-		writeJSONError(w, "Missing id", http.StatusBadRequest)
-		return
-	}
-
-	if !validateUserID(data.ID) {
+	if !validateUserID(userID) {
 		writeJSONError(w, "Invalid user ID format", http.StatusBadRequest)
 		return
 	}
 
-	if data.Email == "" {
-		writeJSONError(w, "Missing email", http.StatusBadRequest)
+	if email == "" {
+		writeJSONError(w, "Missing email parameter", http.StatusBadRequest)
 		return
 	}
 
-	if !validateEmail(data.Email) {
+	if !validateEmail(email) {
 		writeJSONError(w, "Invalid email format", http.StatusBadRequest)
 		return
 	}
 
-	status, err := storage.DB.CreateOrUpdateUser(data.ID, data.Email)
+	status, err := storage.DB.CreateOrUpdateUser(userID, email)
 	if err != nil {
 		log.Printf("Database error: %v", err)
 		writeJSONError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	// Уведомляем Status Service асинхронно
-	go notifyStatusService(data.ID, "sync")
+	go notifyStatusService(userID, "sync")
 
 	writeJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"status":  status,
-		"user_id": data.ID,
+		"user_id": userID,
 	})
 }
 
-// GET /health - проверка работоспособности
 func HealthCheck(w http.ResponseWriter, r *http.Request) {
 	if err := storage.DB.Ping(); err != nil {
 		writeJSONError(w, "Database connection failed", http.StatusServiceUnavailable)

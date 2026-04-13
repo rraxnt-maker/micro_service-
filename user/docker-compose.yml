@@ -4,22 +4,19 @@ services:
   postgres:
     image: postgres:17
     container_name: user_postgres
-    command: -p 5430
     environment:
       POSTGRES_USER: useradmin
       POSTGRES_PASSWORD: secretpassword
       POSTGRES_DB: userdb
     ports:
-      - "5430:5430"
+      - "5430:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U useradmin -d userdb -p 5430"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U useradmin"]
+      interval: 5s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
     networks:
       - user-network
 
@@ -30,20 +27,15 @@ services:
       - "8069:8069"
     environment:
       DB_HOST: postgres
-      DB_PORT: 5430
+      DB_PORT: "5432"
       DB_USER: useradmin
       DB_PASSWORD: secretpassword
       DB_NAME: userdb
-      # 🔥 НОВОЕ: URL Status Service
-      STATUS_SERVICE_URL: ${STATUS_SERVICE_URL:-http://status-service:8070}
-      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-secret-internal-token-123}
     depends_on:
       postgres:
         condition: service_healthy
-    restart: unless-stopped
     networks:
       - user-network
-      - shared-network  # 🔥 Общая сеть для связи с Status Service
 
 volumes:
   postgres_data:
@@ -51,6 +43,3 @@ volumes:
 networks:
   user-network:
     driver: bridge
-  shared-network:  # 🔥 Внешняя сеть для связи между сервисами
-    name: microservices-network
-    external: true
